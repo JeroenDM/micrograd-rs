@@ -1,114 +1,128 @@
-use core::fmt;
-use std::{cell::Cell, ops, rc::Rc};
+use std::{cell::Cell, rc::Rc};
 
-struct Value<'a>(Rc<_Value<'a>>);
-
+#[derive(Debug, Clone)]
 enum Op {
-    None,
-    Add,
-    Sub,
+    Constant,
+    Add(Value, Value),
+    Mul(Value, Value),
 }
 
-pub struct _Value<'a> {
-    data: f32,
+#[derive(Debug, Clone)]
+struct Value(Rc<_Value>);
+
+#[derive(Debug)]
+struct _Value {
+    data: f64,
+    grad: Cell<f64>,
+    done: Cell<bool>,
     op: Op,
-    children: Vec<&'a Value<'a>>,
-    grad: Cell<f32>,
 }
 
-impl fmt::Display for Value<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.data)
-    }
-}
-
-impl Value<'_> {
-    pub fn new(data: f32) -> Self {
+impl Value {
+    fn new(data: f64) -> Self {
         Self(Rc::new(_Value {
             data,
-            op: Op::None,
-            children: Vec::new(),
             grad: Cell::new(0.0),
+            done: Cell::new(false),
+            op: Op::Constant,
         }))
     }
-}
 
-impl<'a> ops::Add<&'a Value<'a>> for &'a Value<'a> {
-    type Output = Value<'a>;
-
-    fn add(self, rhs: &'a Value<'a>) -> Self::Output {
-        Value(Rc::new(_Value {
-            data: self.0.data + rhs.0.data,
-            op: Op::Add,
-            children: vec![self, &rhs],
-            grad: Cell::new(0.0),
-        }))
+    fn get_data(&self) -> f64 {
+        self.0.data
     }
-}
 
-impl<'a> ops::Neg for &'a Value<'a> {
-    type Output = Value<'a>;
-
-    fn neg(self) -> Self::Output {
-        Value(Rc::new(_Value {
-            data: -self.0.data,
-            op: Op::Add,
-            children: vec![self],
-            grad: Cell::new(0.0),
-        }))
-    }
-}
-
-impl<'a> ops::Sub<&'a Value<'a>> for &'a Value<'a> {
-    type Output = Value<'a>;
-
-    fn sub(self, rhs: &'a Value<'a>) -> Self::Output {
-        let temp = -rhs;
-        let res = self + &temp;
-        return res;
-    }
-}
-
-fn print_tree(root: &Value, depth: i32) {
-    print!("|");
-    for _ in 0..depth {
-        print!("--");
-    }
-    println!("[{}]", root);
-    let n = root.0.children.len();
-    if n > 0 {
-        for r in &root.0.children {
-            print_tree(r, depth + 1);
+    fn backwards(&self) {
+        if !self.0.done.get() {
+            self.0.done.set(true);
+            let g_parent = self.0.grad.get();
+            match &self.0.op {
+                Op::Constant => (),
+                Op::Add(x, y) => {
+                    x.0.grad.set(x.0.grad.get() + g_parent);
+                    y.0.grad.set(y.0.grad.get() + g_parent);
+                    x.backwards();
+                    y.backwards();
+                }
+                Op::Mul(x, y) => {
+                    x.0.grad.set(x.0.grad.get() + y.0.data * g_parent);
+                    y.0.grad.set(y.0.grad.get() + x.0.data * g_parent);
+                    x.backwards();
+                    y.backwards();
+                }
+            }
         }
     }
 }
 
-#[derive(Debug)]
-struct Data<'a> {
-    i: i32,
+fn add(x: &Value, y: &Value) -> Value {
+    Value(Rc::new(_Value {
+        data: x.get_data() + y.get_data(),
+        grad: Cell::new(0.0),
+        done: Cell::new(false),
+        op: Op::Add(x.clone(), y.clone()),
+    }))
 }
 
-fn sub<'a>(a: &'a Data<'a>, b: &'a Data<'a>) -> Data<'a> {
-    Data { i: a.i - b.i }
+fn mul(x: &Value, y: &Value) -> Value {
+    Value(Rc::new(_Value {
+        data: x.get_data() + y.get_data(),
+        grad: Cell::new(0.0),
+        done: Cell::new(false),
+        op: Op::Mul(x.clone(), y.clone()),
+    }))
 }
 
-fn add<'l>(a: &'l Data<'l>, b: &'l Data<'l>) -> Data<'l> {
-    let temp = Data::<'l> { i: a.i + b.i };
-    sub(&a, &temp)
+fn neg(x: &Value) -> Value {
+    mul(x, &Value::new(-1.0))
 }
 
 fn main() {
-    let a = Value::new(32.0);
+    let a = Value::new(10.0);
     let b = Value::new(3.0);
-    // let c = Value::new(-1.22);
-    let d = &a + &b;
-    print_tree(&d, 0);
-    // let e = &d - &c;
-    // print_tree(&e, 0);
+    let c = add(&a, &neg(&mul(&a, &b)));
+    // let c = &mul(&a, &b);
+    // let c = &add(&a, &b);
 
-    let u = Data { i: 3 };
-    let v = Data { i: 4 };
-    let w = Data { i: 1 };
-    let z = add(&add(&u, &v), &w);
-    dbg!(z);
+    c.0.grad.set(1.0);
+    c.backwards();
+    dbg!(c);
+    dbg!(a.0.grad.get());
+    dbg!(b.0.grad.get());
 }
+
+// use std::cell::Cell;
+
+// #[derive(Debug)]
+// struct Value<'a> {
+//     data: Cell<f64>,
+//     grad: Cell<f64>,
+//     children : Vec<&'a Value>,
+// }
+
+// impl Value<'_> {
+//     fn new(x: f64) -> Self {
+//         Self { data: Cell::new(x), grad: Cell::new(0.0), children: vec![] }
+//     }
+
+//     fn get(&self) -> f64 {
+//         self.data.get()
+//     }
+// }
+
+// fn add<'a>(x: &'a Value, y: &'a Value) -> Value<'a> {
+//     let sum = x.get() + y.get();
+//     Value { data: Cell::new(sum), grad: Cell::new(0.0), children: vec![] }
+// }
+
+// fn neg<'a>(x: &'a Value) -> Value<'a> {
+//     // return Value::new(-x.get());
+//     Value { data: Cell::new(-x.get()), grad: Cell::new(0.0), children: vec![] }
+// }
+
+// fn main() {
+//     let a = Value::new(10.0);
+//     let b = Value::new(-2.0);
+//     let c = add(&a, &add(&a, &neg(&b)));
+//     dbg!(c);
+// }
