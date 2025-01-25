@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, ops, rc::Rc};
 
 /// Wrapper type to allow storing the nodes in a graph
 /// without having to wrap it into an Rc manually everywhere.
@@ -43,10 +43,6 @@ impl Value {
 
     pub fn set_grad(&self, x: f64) {
         self.0.grad.set(x)
-    }
-
-    pub fn get_data(&self) -> f64 {
-        self.0.data
     }
 
     pub fn backwards(&self) {
@@ -98,46 +94,90 @@ impl Value {
             }
         }
     }
+
+    pub fn pow(&self, n: i32) -> Value {
+        Value(Rc::new(_Value {
+            data: self.data().powi(n),
+            grad: Cell::new(0.0),
+            done: Cell::new(false),
+            op: Op::PowI(self.clone(), n),
+        }))
+    }
+
+    pub fn relu(&self) -> Value {
+        Value(Rc::new(_Value {
+            data: if self.data() > 0.0 { self.data() } else { 0.0 },
+            grad: Cell::new(0.0),
+            done: Cell::new(false),
+            op: Op::Relu(self.clone()),
+        }))
+    }
 }
 
-pub fn add(x: &Value, y: &Value) -> Value {
-    Value(Rc::new(_Value {
-        data: x.get_data() + y.get_data(),
-        grad: Cell::new(0.0),
-        done: Cell::new(false),
-        op: Op::Add(x.clone(), y.clone()),
-    }))
+impl ops::Add<&Value> for &Value {
+    type Output = Value;
+
+    fn add(self, rhs: &Value) -> Self::Output {
+        Value(Rc::new(_Value {
+            data: self.data() + rhs.data(),
+            grad: Cell::new(0.0),
+            done: Cell::new(false),
+            op: Op::Add(self.clone(), rhs.clone()),
+        }))
+    }
 }
 
-pub fn mul(x: &Value, y: &Value) -> Value {
-    Value(Rc::new(_Value {
-        data: x.get_data() * y.get_data(),
-        grad: Cell::new(0.0),
-        done: Cell::new(false),
-        op: Op::Mul(x.clone(), y.clone()),
-    }))
+impl ops::Mul<&Value> for &Value {
+    type Output = Value;
+
+    fn mul(self, rhs: &Value) -> Self::Output {
+        Value(Rc::new(_Value {
+            data: self.data() * rhs.data(),
+            grad: Cell::new(0.0),
+            done: Cell::new(false),
+            op: Op::Mul(self.clone(), rhs.clone()),
+        }))
+    }
 }
 
-pub fn pow(x: &Value, n: i32) -> Value {
-    Value(Rc::new(_Value {
-        data: x.get_data().powi(n),
-        grad: Cell::new(0.0),
-        done: Cell::new(false),
-        op: Op::PowI(x.clone(), n),
-    }))
+impl ops::Add<f64> for &Value {
+    type Output = Value;
+
+    fn add(self, rhs: f64) -> Self::Output {
+        self + &Value::new(rhs)
+    }
 }
 
-pub fn relu(x: &Value) -> Value {
-    Value(Rc::new(_Value {
-        data: if x.data() > 0.0 { x.data() } else { 0.0 },
-        grad: Cell::new(0.0),
-        done: Cell::new(false),
-        op: Op::Relu(x.clone()),
-    }))
+impl ops::Add<&Value> for f64 {
+    type Output = Value;
+
+    fn add(self, rhs: &Value) -> Self::Output {
+        &Value::new(self) + rhs
+    }
 }
 
-pub fn neg(x: &Value) -> Value {
-    mul(x, &Value::new(-1.0))
+impl ops::Mul<f64> for &Value {
+    type Output = Value;
+
+    fn mul(self, rhs: f64) -> Self::Output {
+        self + &Value::new(rhs)
+    }
+}
+
+impl ops::Mul<&Value> for f64 {
+    type Output = Value;
+
+    fn mul(self, rhs: &Value) -> Self::Output {
+        &Value::new(self) * rhs
+    }
+}
+
+impl ops::Neg for &Value {
+    type Output = Value;
+
+    fn neg(self) -> Self::Output {
+        self * &Value::new(-1.0)
+    }
 }
 
 #[cfg(test)]
@@ -148,20 +188,21 @@ mod tests {
     fn ops_forward() {
         let a = Value::new(10.0);
         let b = Value::new(3.0);
-        assert_eq!(neg(&a).data(), -10.0);
-        assert_eq!(add(&a, &b).data(), 13.0);
-        assert_eq!(mul(&a, &b).data(), 30.0);
-        assert_eq!(pow(&a, 3).data(), 1000.0);
+        assert_eq!(-(&a).data(), -10.0);
+        assert_eq!((&a + &b).data(), 13.0);
+        assert_eq!((&a + 5.0).data(), 15.0);
+        assert_eq!((&a * &b).data(), 30.0);
+        assert_eq!((&a).pow(3).data(), 1000.0);
 
-        assert_eq!(relu(&Value::new(1.0)).data(), 1.0);
-        assert_eq!(relu(&Value::new(-1.0)).data(), 0.0);
+        assert_eq!(Value::new(1.0).relu().data(), 1.0);
+        assert_eq!(Value::new(-1.0).relu().data(), 0.0);
     }
 
     #[test]
     fn add_backwards() {
         let a = Value::new(10.0);
         let b = Value::new(3.0);
-        let c = add(&a, &b);
+        let c = &a + &b;
         c.set_grad(2.0);
         c.backwards();
         assert_eq!(a.grad(), 2.0);
@@ -172,7 +213,7 @@ mod tests {
     fn mul_backwards() {
         let a = Value::new(10.0);
         let b = Value::new(3.0);
-        let c = mul(&a, &b);
+        let c = &a * &b;
         c.set_grad(2.0);
         c.backwards();
         assert_eq!(a.grad(), 6.0);
@@ -182,7 +223,7 @@ mod tests {
     #[test]
     fn pow_backwards() {
         let a = Value::new(10.0);
-        let c = pow(&a, 3);
+        let c = (&a).pow(3);
         c.set_grad(2.0);
         c.backwards();
         assert_eq!(a.grad(), 3.0 * 10.0_f64.powi(2) * 2.0);
@@ -191,13 +232,13 @@ mod tests {
     #[test]
     fn relu_backwards() {
         let a = Value::new(10.0);
-        let c = relu(&a);
+        let c = a.relu();
         c.set_grad(2.0);
         c.backwards();
         assert_eq!(a.grad(), 2.0);
 
         let b = Value::new(-10.0);
-        let d = relu(&b);
+        let d = b.relu();
         d.set_grad(2.0);
         d.backwards();
         assert_eq!(b.grad(), 0.0);
@@ -207,7 +248,7 @@ mod tests {
     fn add_mul_neg_backwards() {
         let a = Value::new(10.0);
         let b = Value::new(3.0);
-        let c = add(&a, &neg(&mul(&a, &b)));
+        let c = &a + &-(&(&a * &b));
         c.set_grad(3.0);
         c.backwards();
         assert_eq!(a.grad(), -6.0);
@@ -218,7 +259,7 @@ mod tests {
     fn add_mul_neg_backwards_reset() {
         let a = Value::new(10.0);
         let b = Value::new(3.0);
-        let c = add(&a, &neg(&mul(&a, &b)));
+        let c = &a + &-(&(&a * &b));
 
         c.set_grad(1.0);
         c.backwards();
