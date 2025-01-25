@@ -1,9 +1,16 @@
 use std::{cell::Cell, ops, rc::Rc};
+use std::fmt;
 
 /// Wrapper type to allow storing the nodes in a graph
 /// without having to wrap it into an Rc manually everywhere.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Value(Rc<_Value>);
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "value(data: {}, grad: {})", self.data(), self.grad())
+    }
+}
 
 #[derive(Debug)]
 struct _Value {
@@ -114,6 +121,19 @@ impl Value {
     }
 }
 
+// impl ops::Add<Value> for Value {
+//     type Output = Value;
+
+//     fn add(self, rhs: Value) -> Self::Output {
+//         Value(Rc::new(_Value {
+//             data: self.data() + rhs.data(),
+//             grad: Cell::new(0.0),
+//             done: Cell::new(false),
+//             op: Op::Add(self.clone(), rhs.clone()),
+//         }))
+//     }
+// }
+
 impl ops::Add<&Value> for &Value {
     type Output = Value;
 
@@ -155,6 +175,13 @@ impl ops::Add<&Value> for f64 {
         &Value::new(self) + rhs
     }
 }
+
+// impl ops::AddAssign for &Value {
+//     fn add_assign(&mut self, rhs: Self) {
+//         let s = self.clone();
+//         *self = &(&s + rhs);
+//     }
+// }
 
 impl ops::Mul<f64> for &Value {
     type Output = Value;
