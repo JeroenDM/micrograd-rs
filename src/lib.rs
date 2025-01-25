@@ -19,6 +19,8 @@ enum Op {
     Constant,
     Add(Value, Value),
     Mul(Value, Value),
+    PowI(Value, i32),
+    Relu(Value),
 }
 
 impl Value {
@@ -60,10 +62,18 @@ impl Value {
                     y.backwards();
                 }
                 Op::Mul(x, y) => {
-                    x.0.grad.set(x.0.grad.get() + y.0.data * g_parent);
-                    y.0.grad.set(y.0.grad.get() + x.0.data * g_parent);
+                    x.set_grad(x.grad() + y.0.data * g_parent);
+                    y.set_grad(y.grad() + x.0.data * g_parent);
                     x.backwards();
                     y.backwards();
+                }
+                Op::PowI(x, n) => {
+                    x.set_grad(x.grad() + (*n as f64) * x.data().powi(n - 1) * g_parent);
+                    x.backwards();
+                }
+                Op::Relu(x) => {
+                    x.set_grad(x.grad() + if x.data() > 0.0 { g_parent } else { 0.0 });
+                    x.backwards();
                 }
             }
         }
@@ -83,6 +93,8 @@ impl Value {
                     x.reset();
                     y.reset();
                 }
+                Op::PowI(x, _) => x.reset(),
+                Op::Relu(x) => x.reset(),
             }
         }
     }
@@ -106,6 +118,24 @@ pub fn mul(x: &Value, y: &Value) -> Value {
     }))
 }
 
+pub fn pow(x: &Value, n: i32) -> Value {
+    Value(Rc::new(_Value {
+        data: x.get_data().powi(n),
+        grad: Cell::new(0.0),
+        done: Cell::new(false),
+        op: Op::PowI(x.clone(), n),
+    }))
+}
+
+pub fn relu(x: &Value) -> Value {
+    Value(Rc::new(_Value {
+        data: if x.data() > 0.0 { x.data() } else { 0.0 },
+        grad: Cell::new(0.0),
+        done: Cell::new(false),
+        op: Op::Relu(x.clone()),
+    }))
+}
+
 pub fn neg(x: &Value) -> Value {
     mul(x, &Value::new(-1.0))
 }
@@ -121,6 +151,10 @@ mod tests {
         assert_eq!(neg(&a).data(), -10.0);
         assert_eq!(add(&a, &b).data(), 13.0);
         assert_eq!(mul(&a, &b).data(), 30.0);
+        assert_eq!(pow(&a, 3).data(), 1000.0);
+
+        assert_eq!(relu(&Value::new(1.0)).data(), 1.0);
+        assert_eq!(relu(&Value::new(-1.0)).data(), 0.0);
     }
 
     #[test]
@@ -143,6 +177,30 @@ mod tests {
         c.backwards();
         assert_eq!(a.grad(), 6.0);
         assert_eq!(b.grad(), 20.0);
+    }
+
+    #[test]
+    fn pow_backwards() {
+        let a = Value::new(10.0);
+        let c = pow(&a, 3);
+        c.set_grad(2.0);
+        c.backwards();
+        assert_eq!(a.grad(), 3.0 * 10.0_f64.powi(2) * 2.0);
+    }
+
+    #[test]
+    fn relu_backwards() {
+        let a = Value::new(10.0);
+        let c = relu(&a);
+        c.set_grad(2.0);
+        c.backwards();
+        assert_eq!(a.grad(), 2.0);
+
+        let b = Value::new(-10.0);
+        let d = relu(&b);
+        d.set_grad(2.0);
+        d.backwards();
+        assert_eq!(b.grad(), 0.0);
     }
 
     #[test]
